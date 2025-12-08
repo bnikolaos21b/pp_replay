@@ -16,7 +16,7 @@
     #videoContainer {
       position: relative;
       width: 100%;
-      height: 60vh;               /* use top ~60% of screen */
+      height: 75vh;               /* use top ~60% of screen */
       background: #000;
     }
 
@@ -192,10 +192,9 @@
     let mediaRecorder = null;
     let bufferChunks = [];
     let bufferSeconds = 30; // default buffer length
-    let cutoffSeconds = 3; // default cutoff
-    const timesliceMs = 1000; // logical 1 second units
+    let cutoffSeconds = 3;  // default cutoff
+    const timesliceMs = 1000; // 1 second chunks
     let isSaving = false;
-    let requestIntervalId = null; // interval for requestData()
 
     let startTime = null;
     let timerIntervalId = null;
@@ -322,9 +321,22 @@
         return;
       }
 
+      // Prefer MP4 on Safari to avoid WebM playback weirdness
+      let options = {};
+      if (typeof MediaRecorder.isTypeSupported === "function") {
+        if (MediaRecorder.isTypeSupported("video/mp4")) {
+          options.mimeType = "video/mp4";
+        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
+          options.mimeType = "video/webm;codecs=vp9";
+        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
+          options.mimeType = "video/webm;codecs=vp8";
+        } else if (MediaRecorder.isTypeSupported("video/webm")) {
+          options.mimeType = "video/webm";
+        }
+      }
+
       try {
-        // Let the browser decide mimeType
-        mediaRecorder = new MediaRecorder(mediaStream);
+        mediaRecorder = new MediaRecorder(mediaStream, options);
       } catch (err) {
         console.error(err);
         setStatus("MediaRecorder init failed: " + err.message);
@@ -361,19 +373,10 @@
 
       mediaRecorder.onstop = () => {
         stopTimer();
-        if (requestIntervalId) {
-          clearInterval(requestIntervalId);
-          requestIntervalId = null;
-        }
       };
 
-      // Start without timeslice and manually request data every second
-      mediaRecorder.start();
-      requestIntervalId = setInterval(() => {
-        if (mediaRecorder && mediaRecorder.state === "recording") {
-          mediaRecorder.requestData();
-        }
-      }, timesliceMs);
+      // Let MediaRecorder emit 1s chunks by itself
+      mediaRecorder.start(timesliceMs);
     }
 
     function showSavingOverlay(show) {
@@ -413,13 +416,13 @@
       );
 
       try {
-        // Remove the last cutoffSeconds worth of chunks
+        // Discard the last cutoffSeconds worth of chunks
         const effectiveChunks = bufferChunks.slice(
           0,
           bufferChunks.length - cutoffChunks
         );
 
-        const mimeType = mediaRecorder.mimeType || "video/webm";
+        const mimeType = mediaRecorder.mimeType || "video/mp4";
         const highlightBlob = new Blob(effectiveChunks, { type: mimeType });
 
         if (highlightBlob.size === 0) {
