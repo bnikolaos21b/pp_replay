@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Padel Replay – Last X Seconds</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #000;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #videoContainer {
+      position: relative;
+      flex: 1;
+      background: #000;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror; remove if you don't like it */
+    }
+    #controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 10px 12px 18px;
+      background: rgba(0, 0, 0, 0.85);
+      gap: 8px;
+    }
+    #status {
+      font-size: 14px;
+      opacity: 0.8;
+      text-align: center;
+    }
+    #timer {
+      font-size: 14px;
+      opacity: 0.8;
+      text-align: center;
+    }
+    #settingsRow, #cutoffRow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+    input[type="number"] {
+      width: 70px;
+      padding: 4px 6px;
+      border-radius: 999px;
+      border: none;
+      text-align: center;
+      font-size: 14px;
+    }
+    #buttons {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+      justify-content: center;
+    }
+    button {
+      flex: 1;
+      max-width: 180px;
+      padding: 10px 14px;
+      font-size: 16px;
+      border-radius: 999px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #startBtn {
+      background: #16a34a;
+      color: #fff;
+    }
+    #saveBtn {
+      background: #dc2626;
+      color: #fff;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    /* Saving overlay */
+    #savingOverlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      z-index: 10;
+      text-align: center;
+      padding: 20px;
+    }
+    #savingText {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    #savingSub {
+      font-size: 14px;
+      opacity: 0.85;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      animation: spin 1s linear infinite;
+      margin-bottom: 10px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="videoContainer">
+    <video id="preview" playsinline autoplay muted></video>
+
+    <!-- Saving overlay -->
+    <div id="savingOverlay">
+      <div class="spinner"></div>
+      <div id="savingText">Saving highlight…</div>
+      <div id="savingSub">Clip ends a few seconds before button press</div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div id="status">Set times and tap “Start Camera”.</div>
+    <div id="timer">Streaming: 00:00</div>
+
+    <div id="settingsRow">
+      <span>Buffer:</span>
+      <input id="bufferInput" type="number" min="5" max="120" step="5" value="30" />
+      <span>seconds</span>
+    </div>
+
+    <div id="cutoffRow">
+      <span>Cut off last:</span>
+      <input id="cutoffInput" type="number" min="0" max="15" step="1" value="3" />
+      <span>seconds</span>
+    </div>
+
+    <div id="buttons">
+      <button id="startBtn">Start Camera</button>
+      <button id="saveBtn" disabled>Save last Xs</button>
+    </div>
+  </div>
+
+  <script>
+    const preview = document.getElementById('preview');
+    const startBtn = document.getElementById('startBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const statusEl = document.getElementById('status');
+    const timerEl = document.getElementById('timer');
+    const bufferInput = document.getElementById('bufferInput');
+    const cutoffInput = document.getElementById('cutoffInput');
+    const savingOverlay = document.getElementById('savingOverlay');
+
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let bufferChunks = [];
+    let bufferSeconds = 30;        // default buffer length
+    let cutoffSeconds = 3;         // default cutoff
+    const timesliceMs = 1000;      // logical 1 second units
+    let isSaving = false;
+    let requestIntervalId = null;  // interval for requestData()
+
+    let startTime = null;
+    let timerIntervalId = null;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      console.log(text);
+    }
+
+    function formatTime(seconds) {
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    function startTimer() {
+      startTime = Date.now();
+      if (timerIntervalId) clearInterval(timerIntervalId);
+      timerIntervalId = setInterval(() => {
+        const elapsedSec = (Date.now() - startTime) / 1000;
+        timerEl.textContent = 'Streaming: ' + formatTime(elapsedSec);
+      }, 1000);
+    }
+
+    function stopTimer() {
+      if (timerIntervalId) {
+        clearInterval(timerIntervalId);
+        timerIntervalId = null;
+      }
+    }
+
+    function updateBufferSecondsFromInput() {
+      const raw = parseInt(bufferInput.value, 10);
+      if (isNaN(raw)) {
+        bufferInput.value = bufferSeconds;
+        return;
+      }
+      bufferSeconds = Math.max(5, Math.min(120, raw));
+      bufferInput.value = bufferSeconds;
+      if (cutoffSeconds >= bufferSeconds) {
+        cutoffSeconds = Math.max(0, bufferSeconds - 1);
+        cutoffInput.value = cutoffSeconds;
+      }
+      updateStatusReady();
+    }
+
+    function updateCutoffSecondsFromInput() {
+      const raw = parseInt(cutoffInput.value, 10);
+      if (isNaN(raw)) {
+        cutoffInput.value = cutoffSeconds;
+        return;
+      }
+      cutoffSeconds = Math.max(0, Math.min(15, raw));
+      if (cutoffSeconds >= bufferSeconds) {
+        cutoffSeconds = Math.max(0, bufferSeconds - 1);
+      }
+      cutoffInput.value = cutoffSeconds;
+      updateStatusReady();
+    }
+
+    function updateStatusReady() {
+      setStatus(
+        'Ready. Buffer: ' +
+          bufferSeconds +
+          's, cut off last ' +
+          cutoffSeconds +
+          's. Tap “Start Camera” to begin.'
+      );
+      document.getElementById('savingSub').textContent =
+        'Clip ends ~' + cutoffSeconds + 's before button press';
+    }
+
+    bufferInput.addEventListener('change', updateBufferSecondsFromInput);
+    bufferInput.addEventListener('blur', updateBufferSecondsFromInput);
+    cutoffInput.addEventListener('change', updateCutoffSecondsFromInput);
+    cutoffInput.addEventListener('blur', updateCutoffSecondsFromInput);
+
+    async function startCamera() {
+      if (mediaStream) return; // already running
+
+      updateBufferSecondsFromInput();
+      updateCutoffSecondsFromInput();
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus('This browser does not support camera access (getUserMedia missing).');
+        return;
+      }
+
+      try {
+        const constraints = {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: true
+        };
+
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        preview.srcObject = mediaStream;
+
+        startRecording();
+
+        startBtn.disabled = true;
+        saveBtn.disabled = false;
+        setStatus(
+          'Recording… buffer holds last ' +
+            bufferSeconds +
+            's. Clip will end ~' +
+            cutoffSeconds +
+            's before you press Save.'
+        );
+      } catch (err) {
+        console.error(err);
+        setStatus('Error accessing camera/mic: ' + err.message);
+      }
+    }
+
+    function startRecording() {
+      if (!mediaStream) {
+        setStatus('No media stream.');
+        return;
+      }
+
+      try {
+        // Let the browser decide mimeType
+        mediaRecorder = new MediaRecorder(mediaStream);
+      } catch (err) {
+        console.error(err);
+        setStatus('MediaRecorder init failed: ' + err.message);
+        return;
+      }
+
+      bufferChunks = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (!event.data || event.data.size === 0) return;
+        bufferChunks.push(event.data);
+
+        const maxChunks = Math.ceil((bufferSeconds * 1000) / timesliceMs);
+        if (bufferChunks.length > maxChunks) {
+          bufferChunks.splice(0, bufferChunks.length - maxChunks);
+        }
+      };
+
+      mediaRecorder.onstart = () => {
+        startTimer();
+        setStatus(
+          'Recording… buffer: ' +
+            bufferSeconds +
+            's, cutting last ' +
+            cutoffSeconds +
+            's. Tap “Save last Xs” for highlight.'
+        );
+      };
+
+      mediaRecorder.onerror = (e) => {
+        console.error('Recorder error', e);
+        setStatus('Recorder error: ' + (e.error?.name ?? 'unknown'));
+      };
+
+      mediaRecorder.onstop = () => {
+        stopTimer();
+        if (requestIntervalId) {
+          clearInterval(requestIntervalId);
+          requestIntervalId = null;
+        }
+      };
+
+      // Start without timeslice and manually request data every second
+      mediaRecorder.start();
+      requestIntervalId = setInterval(() => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.requestData();
+        }
+      }, timesliceMs);
+    }
+
+    function showSavingOverlay(show) {
+      savingOverlay.style.display = show ? 'flex' : 'none';
+    }
+
+    async function saveLastSeconds() {
+      if (isSaving) return;
+      if (!mediaRecorder || bufferChunks.length === 0) {
+        setStatus('Nothing in buffer yet. Wait a bit after starting.');
+        return;
+      }
+
+      const cutoffChunks = Math.round((cutoffSeconds * 1000) / timesliceMs);
+      if (bufferChunks.length <= cutoffChunks + 1) {
+        setStatus(
+          'Not enough history yet to cut ' +
+            cutoffSeconds +
+            's. Play a bit longer before saving.'
+        );
+        return;
+      }
+
+      isSaving = true;
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      showSavingOverlay(true);
+      setStatus(
+        'Preparing highlight of last ' +
+          bufferSeconds +
+          's (ending ~' +
+          cutoffSeconds +
+          's before button press)… ' +
+          '(chunks: ' + bufferChunks.length + ')'
+      );
+
+      try {
+        // Remove the last cutoffSeconds worth of chunks
+        const effectiveChunks = bufferChunks.slice(
+          0,
+          bufferChunks.length - cutoffChunks
+        );
+
+        const mimeType = mediaRecorder.mimeType || 'video/webm';
+        const highlightBlob = new Blob(effectiveChunks, { type: mimeType });
+
+        if (highlightBlob.size === 0) {
+          setStatus(
+            'Highlight blob is empty – your browser may not support this MediaRecorder setup.'
+          );
+        } else {
+          const url = URL.createObjectURL(highlightBlob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+
+          const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+          a.download = `padel-highlight-${bufferSeconds}s-cut${cutoffSeconds}s-${Date.now()}.${ext}`;
+
+          document.body.appendChild(a);
+          a.click();
+
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 2000);
+
+          setStatus(
+            'Highlight saved/opened (last ' +
+              bufferSeconds +
+              's, ending ~' +
+              cutoffSeconds +
+              's before press). Check Files/Downloads.'
+          );
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus('Error while saving highlight: ' + err.message);
+      } finally {
+        setTimeout(() => {
+          isSaving = false;
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save last Xs';
+          showSavingOverlay(false);
+        }, 3000);
+      }
+    }
+
+    startBtn.addEventListener('click', startCamera);
+    saveBtn.addEventListener('click', saveLastSeconds);
+
+    // iOS sometimes needs a user gesture first
+    document.body.addEventListener('touchstart', () => {}, { once: true });
+
+    // initial status
+    updateStatusReady();
+  </script>
+</body>
+</html>
+
