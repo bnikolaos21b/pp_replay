@@ -16,7 +16,7 @@
     #videoContainer {
       position: relative;
       width: 100%;
-      height: 90vh;               /* use top ~90% of screen */
+      height: 90vh;               /* use top ~60% of screen */
       background: #000;
     }
 
@@ -151,7 +151,7 @@
     <div id="savingOverlay">
       <div class="spinner"></div>
       <div id="savingText">Saving highlight…</div>
-      <div id="savingSub">Converting to iPhone video…</div>
+      <div id="savingSub">Clip ends a few seconds before button press</div>
     </div>
   </div>
 
@@ -177,8 +177,6 @@
     </div>
   </div>
 
-  <!-- FFmpeg WASM for in-browser conversion -->
-  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
   <script>
     const preview = document.getElementById("preview");
     const startBtn = document.getElementById("startBtn");
@@ -199,27 +197,6 @@
 
     let startTime = null;
     let timerIntervalId = null;
-
-    // FFmpeg setup
-    const { createFFmpeg, fetchFile } = FFmpeg;
-    const ffmpeg = createFFmpeg({
-	  log: false
-    });
-    let ffmpegLoaded = false;
-
-    async function ensureFfmpegLoaded() {
-      if (ffmpegLoaded) return;
-      setStatus("Loading video encoder (first time only)…");
-      await ffmpeg.load();
-      ffmpegLoaded = true;
-      setStatus(
-        "Encoder loaded. Buffer: " +
-          bufferSeconds +
-          "s, cut off last " +
-          cutoffSeconds +
-          "s."
-      );
-    }
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -286,7 +263,7 @@
           "s. Tap “Start Camera” to begin."
       );
       document.getElementById("savingSub").textContent =
-        "Converting to iPhone video… (ends ~" + cutoffSeconds + "s before press)";
+        "Clip ends ~" + cutoffSeconds + "s before button press";
     }
 
     bufferInput.addEventListener("change", updateBufferSecondsFromInput);
@@ -343,18 +320,17 @@
         return;
       }
 
-      // Let Safari pick its best recording format
-      let options = {};
+      // Force iPhone-compatible MP4 (H.264)
+      let options = { mimeType: "video/mp4;codecs=h264" };
+      
       if (typeof MediaRecorder.isTypeSupported === "function") {
-        if (MediaRecorder.isTypeSupported("video/mp4")) {
-          options.mimeType = "video/mp4";
-        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
-          options.mimeType = "video/webm;codecs=vp9";
-        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
-          options.mimeType = "video/webm;codecs=vp8";
-        } else if (MediaRecorder.isTypeSupported("video/webm")) {
-          options.mimeType = "video/webm";
-        }
+          if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+              if (MediaRecorder.isTypeSupported("video/mp4")) {
+                  options.mimeType = "video/mp4";
+              } else {
+                  options.mimeType = "video/webm;codecs=vp8"; // last fallback
+              }
+          }
       }
 
       try {
@@ -397,7 +373,7 @@
         stopTimer();
       };
 
-      // 1s chunks
+      // Let MediaRecorder emit 1s chunks by itself
       mediaRecorder.start(timesliceMs);
     }
 
@@ -438,61 +414,27 @@
       );
 
       try {
-        // Build highlight blob in native recorder format first
+        // Discard the last cutoffSeconds worth of chunks
         const effectiveChunks = bufferChunks.slice(
           0,
           bufferChunks.length - cutoffChunks
         );
 
-        const sourceMimeType = mediaRecorder.mimeType || "video/webm";
-        const highlightBlob = new Blob(effectiveChunks, { type: sourceMimeType });
+        const mimeType = mediaRecorder.mimeType || "video/mp4";
+        const highlightBlob = new Blob(effectiveChunks, { type: mimeType });
 
         if (highlightBlob.size === 0) {
           setStatus(
             "Highlight blob is empty – your browser may not support this MediaRecorder setup."
           );
         } else {
-          // Convert to real MP4 (H.264/AAC) via FFmpeg so iOS Files/Photos can open it
-          await ensureFfmpegLoaded();
-          setStatus(
-            "Converting highlight to MP4 (this may take a few seconds)…"
-          );
-          document.getElementById("savingText").textContent = "Converting…";
-          document.getElementById("savingSub").textContent =
-            "Encoding to iPhone-compatible video…";
-
-          // Write input file to FFmpeg FS
-          ffmpeg.FS(
-            "writeFile",
-            "input",
-            await fetchFile(highlightBlob)
-          );
-
-          // Highest quality: keep resolution, H.264 + AAC
-          await ffmpeg.run(
-            "-i", "input",
-            "-c:v", "libx264",
-            "-preset", "slow",
-            "-crf", "20",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-movflags", "+faststart",
-            "output.mp4"
-          );
-
-          const data = ffmpeg.FS("readFile", "output.mp4");
-          const mp4Blob = new Blob([data.buffer], { type: "video/mp4" });
-
-          // Clean FS for next run
-          ffmpeg.FS("unlink", "input");
-          ffmpeg.FS("unlink", "output.mp4");
-
-          const url = URL.createObjectURL(mp4Blob);
+          const url = URL.createObjectURL(highlightBlob);
           const a = document.createElement("a");
           a.style.display = "none";
           a.href = url;
-          a.download = `padel-highlight-${bufferSeconds}s-cut${cutoffSeconds}s-${Date.now()}.mp4`;
+
+          const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+          a.download = `padel-highlight-${bufferSeconds}s-cut${cutoffSeconds}s-${Date.now()}.${ext}`;
 
           document.body.appendChild(a);
           a.click();
@@ -500,27 +442,24 @@
           setTimeout(() => {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-          }, 4000);
+          }, 2000);
 
           setStatus(
-            "Highlight saved as MP4 (last " +
+            "Highlight saved/opened (last " +
               bufferSeconds +
               "s, ending ~" +
               cutoffSeconds +
-              "s before press). You should be able to open it from Files."
+              "s before press). Check Files/Downloads."
           );
         }
       } catch (err) {
         console.error(err);
-        setStatus("Error while saving/converting highlight: " + err.message);
+        setStatus("Error while saving highlight: " + err.message);
       } finally {
         setTimeout(() => {
           isSaving = false;
           saveBtn.disabled = false;
           saveBtn.textContent = "Save last Xs";
-          document.getElementById("savingText").textContent = "Saving highlight…";
-          document.getElementById("savingSub").textContent =
-            "Converting to iPhone video…";
           showSavingOverlay(false);
         }, 3000);
       }
