@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Ping Pong Replay – Last X Seconds</title>
+  <title>Padel Replay – Last X Seconds</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <style>
     body {
@@ -178,8 +178,7 @@
   </div>
 
   <!-- FFmpeg WASM for in-browser conversion -->
-  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js"></script>
-
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
   <script>
     const preview = document.getElementById("preview");
     const startBtn = document.getElementById("startBtn");
@@ -204,8 +203,8 @@
     // FFmpeg setup
     const { createFFmpeg, fetchFile } = FFmpeg;
     const ffmpeg = createFFmpeg({
-      corePath: "https://unpkg.com/@ffmpeg/core@0.12.10/dist/ffmpeg-core.js",
-      log: false
+        corePath: "https://unpkg.com/@ffmpeg/core@0.11.6/dist/ffmpeg-core.js",
+	log: false
     });
     let ffmpegLoaded = false;
 
@@ -494,7 +493,7 @@
           const a = document.createElement("a");
           a.style.display = "none";
           a.href = url;
-          a.download = `ping-pong-${Date.now()}.mp4`;
+          a.download = `padel-highlight-${bufferSeconds}s-cut${cutoffSeconds}s-${Date.now()}.mp4`;
 
           document.body.appendChild(a);
           a.click();
