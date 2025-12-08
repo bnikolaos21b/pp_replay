@@ -320,18 +320,17 @@
         return;
       }
 
-      // Prefer MP4 on Safari to avoid WebM playback weirdness
-      let options = {};
+      // Force iPhone-compatible MP4 (H.264)
+      let options = { mimeType: "video/mp4;codecs=h264" };
+      
       if (typeof MediaRecorder.isTypeSupported === "function") {
-        if (MediaRecorder.isTypeSupported("video/mp4")) {
-          options.mimeType = "video/mp4";
-        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
-          options.mimeType = "video/webm;codecs=vp9";
-        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
-          options.mimeType = "video/webm;codecs=vp8";
-        } else if (MediaRecorder.isTypeSupported("video/webm")) {
-          options.mimeType = "video/webm";
-        }
+          if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+              if (MediaRecorder.isTypeSupported("video/mp4")) {
+                  options.mimeType = "video/mp4";
+              } else {
+                  options.mimeType = "video/webm;codecs=vp8"; // last fallback
+              }
+          }
       }
 
       try {
