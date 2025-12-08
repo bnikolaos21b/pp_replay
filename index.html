@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Padel Replay – Last X Seconds</title>
+  <title>Ping Pong Replay – Last X Seconds</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <style>
     body {
@@ -12,11 +12,11 @@
       color: #fff;
     }
 
-    /* Page layout: scrollable, video at top, controls under it */
+    /* Page layout: video at top, controls under it */
     #videoContainer {
       position: relative;
       width: 100%;
-      height: 90vh;               /* use top ~60% of screen */
+      height: 90vh;               /* use top ~90% of screen */
       background: #000;
     }
 
@@ -302,7 +302,7 @@
         startBtn.disabled = true;
         saveBtn.disabled = false;
         setStatus(
-          "Recording… buffer holds last " +
+          "Recording ping pong… buffer holds last " +
             bufferSeconds +
             "s. Clip will end ~" +
             cutoffSeconds +
@@ -320,17 +320,14 @@
         return;
       }
 
-      // Force iPhone-compatible MP4 (H.264)
-      let options = { mimeType: "video/mp4;codecs=h264" };
-      
+      // Prefer WebM when possible
+      let options = {};
       if (typeof MediaRecorder.isTypeSupported === "function") {
-          if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-              if (MediaRecorder.isTypeSupported("video/mp4")) {
-                  options.mimeType = "video/mp4";
-              } else {
-                  options.mimeType = "video/webm;codecs=vp8"; // last fallback
-              }
-          }
+        if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
+          options.mimeType = "video/webm;codecs=vp8";
+        } else if (MediaRecorder.isTypeSupported("video/webm")) {
+          options.mimeType = "video/webm";
+        }
       }
 
       try {
@@ -356,7 +353,7 @@
       mediaRecorder.onstart = () => {
         startTimer();
         setStatus(
-          "Recording… buffer: " +
+          "Recording ping pong… buffer: " +
             bufferSeconds +
             "s, cutting last " +
             cutoffSeconds +
@@ -373,7 +370,7 @@
         stopTimer();
       };
 
-      // Let MediaRecorder emit 1s chunks by itself
+      // 1s chunks
       mediaRecorder.start(timesliceMs);
     }
 
@@ -403,7 +400,7 @@
       saveBtn.textContent = "Saving…";
       showSavingOverlay(true);
       setStatus(
-        "Preparing highlight of last " +
+        "Preparing ping pong highlight of last " +
           bufferSeconds +
           "s (ending ~" +
           cutoffSeconds +
@@ -420,7 +417,8 @@
           bufferChunks.length - cutoffChunks
         );
 
-        const mimeType = mediaRecorder.mimeType || "video/mp4";
+        // Save as pure WebM – safest for later conversion
+        const mimeType = "video/webm";
         const highlightBlob = new Blob(effectiveChunks, { type: mimeType });
 
         if (highlightBlob.size === 0) {
@@ -433,8 +431,8 @@
           a.style.display = "none";
           a.href = url;
 
-          const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-          a.download = `padel-highlight-${bufferSeconds}s-cut${cutoffSeconds}s-${Date.now()}.${ext}`;
+          const ext = "webm";
+          a.download = `pingpong-highlight-${bufferSeconds}s-cut${cutoffSeconds}s-${Date.now()}.${ext}`;
 
           document.body.appendChild(a);
           a.click();
@@ -445,11 +443,11 @@
           }, 2000);
 
           setStatus(
-            "Highlight saved/opened (last " +
+            "Highlight saved as .webm (last " +
               bufferSeconds +
               "s, ending ~" +
               cutoffSeconds +
-              "s before press). Check Files/Downloads."
+              "s before press). Convert this file later to MP4 on PC or online."
           );
         }
       } catch (err) {
