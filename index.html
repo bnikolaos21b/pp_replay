@@ -337,18 +337,19 @@
       chosenMime = "";
       chosenExt = "webm";
 
-      // Prefer WebM when supported, otherwise let the browser choose (Safari will typically use MP4)
       if (typeof MediaRecorder.isTypeSupported === "function") {
-        if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")) {
+        // 1) Try MP4 first (better for iPhone)
+        if (MediaRecorder.isTypeSupported("video/mp4;codecs=h264,aac")) {
+          options.mimeType = "video/mp4;codecs=h264,aac";
+        }
+        // 2) Otherwise, try WebM
+        else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")) {
           options.mimeType = "video/webm;codecs=vp8,opus";
         } else if (MediaRecorder.isTypeSupported("video/webm")) {
           options.mimeType = "video/webm";
         }
-        // You can add explicit MP4 attempts here if desired:
-        // else if (MediaRecorder.isTypeSupported("video/mp4;codecs=avc1.42E01E,mp4a.40.2")) {
-        //   options.mimeType = "video/mp4;codecs=avc1.42E01E,mp4a.40.2";
-        // }
       }
+
 
       try {
         mediaRecorder = new MediaRecorder(mediaStream, options);
