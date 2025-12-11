@@ -156,7 +156,7 @@
   </div>
 
   <div id="controls">
-    <div id="status">Set times and tap “Start Camera”.</div>
+    <div id="status">Set times and tap "Start Camera".</div>
     <div id="timer">Streaming: 00:00</div>
 
     <div id="settingsRow">
@@ -198,6 +198,10 @@
     let startTime = null;
     let timerIntervalId = null;
 
+    // Track actual mime type and extension used by the recorder
+    let chosenMime = "";
+    let chosenExt = "webm";
+
     function setStatus(text) {
       statusEl.textContent = text;
       console.log(text);
@@ -223,6 +227,15 @@
         clearInterval(timerIntervalId);
         timerIntervalId = null;
       }
+    }
+
+    function guessExtensionFromMime(mime) {
+      if (!mime) return "webm";
+      const lower = mime.toLowerCase();
+      if (lower.includes("mp4") || lower.includes("quicktime")) return "mp4";
+      if (lower.includes("ogg")) return "ogg";
+      if (lower.includes("webm")) return "webm";
+      return "webm";
     }
 
     function updateBufferSecondsFromInput() {
@@ -260,7 +273,7 @@
           bufferSeconds +
           "s, cut off last " +
           cutoffSeconds +
-          "s. Tap “Start Camera” to begin."
+          "s. Tap \"Start Camera\" to begin."
       );
       document.getElementById("savingSub").textContent =
         "Clip ends ~" + cutoffSeconds + "s before button press";
@@ -320,23 +333,36 @@
         return;
       }
 
-      // Prefer WebM when possible
       let options = {};
+      chosenMime = "";
+      chosenExt = "webm";
+
+      // Prefer WebM when supported, otherwise let the browser choose (Safari will typically use MP4)
       if (typeof MediaRecorder.isTypeSupported === "function") {
-        if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
-          options.mimeType = "video/webm;codecs=vp8";
+        if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")) {
+          options.mimeType = "video/webm;codecs=vp8,opus";
         } else if (MediaRecorder.isTypeSupported("video/webm")) {
           options.mimeType = "video/webm";
         }
+        // You can add explicit MP4 attempts here if desired:
+        // else if (MediaRecorder.isTypeSupported("video/mp4;codecs=avc1.42E01E,mp4a.40.2")) {
+        //   options.mimeType = "video/mp4;codecs=avc1.42E01E,mp4a.40.2";
+        // }
       }
 
       try {
         mediaRecorder = new MediaRecorder(mediaStream, options);
       } catch (err) {
-        console.error(err);
+        console.error("MediaRecorder init failed with options", options, err);
         setStatus("MediaRecorder init failed: " + err.message);
         return;
       }
+
+      // Detect actual mime type that the recorder will use
+      chosenMime = mediaRecorder.mimeType || options.mimeType || "";
+      chosenExt = guessExtensionFromMime(chosenMime);
+
+      console.log("Using mimeType for recording:", chosenMime, "→ ext:", chosenExt);
 
       bufferChunks = [];
 
@@ -357,7 +383,7 @@
             bufferSeconds +
             "s, cutting last " +
             cutoffSeconds +
-            "s. Tap “Save last Xs” for highlight."
+            "s. Tap \"Save last Xs\" for highlight."
         );
       };
 
@@ -417,8 +443,12 @@
           bufferChunks.length - cutoffChunks
         );
 
-        // Save as pure WebM – safest for later conversion
-        const mimeType = "video/webm";
+        // Use the actual mime that the recorder produced
+        const mimeType =
+          chosenMime ||
+          (mediaRecorder && mediaRecorder.mimeType) ||
+          "video/webm";
+
         const highlightBlob = new Blob(effectiveChunks, { type: mimeType });
 
         if (highlightBlob.size === 0) {
@@ -431,11 +461,19 @@
           a.style.display = "none";
           a.href = url;
 
-          const ext = "webm";
+          const ext = chosenExt || guessExtensionFromMime(mimeType);
           a.download = `pingpong-highlight-${bufferSeconds}s-cut${cutoffSeconds}s-${Date.now()}.${ext}`;
 
           document.body.appendChild(a);
           a.click();
+
+          // Fallback for browsers that ignore download on blob URLs (e.g., some iOS cases)
+          setTimeout(() => {
+            if (!document.hidden) {
+              // If the tab didn't lose focus, try opening in a new tab so the user can long-press to save
+              window.open(url, "_blank");
+            }
+          }, 500);
 
           setTimeout(() => {
             document.body.removeChild(a);
@@ -443,11 +481,13 @@
           }, 2000);
 
           setStatus(
-            "Highlight saved as .webm (last " +
+            "Highlight saved (" +
+              ext.toUpperCase() +
+              ", last " +
               bufferSeconds +
               "s, ending ~" +
               cutoffSeconds +
-              "s before press). Convert this file later to MP4 on PC or online."
+              "s before press)."
           );
         }
       } catch (err) {
@@ -472,6 +512,18 @@
       () => {},
       { once: true }
     );
+
+    // Clean up media on page unload
+    window.addEventListener("beforeunload", () => {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        try {
+          mediaRecorder.stop();
+        } catch (e) {}
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+      }
+    });
 
     // initial status
     updateStatusReady();
